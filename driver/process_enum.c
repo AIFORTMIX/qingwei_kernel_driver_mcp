@@ -62,7 +62,6 @@ int qw_list_processes(kai_proc_list_packet_t *pkt)
 
         /* 统计线程数 */
         {
-            struct task_struct *t;
             int tc = 0;
             if (task->signal) {
                 tc = atomic_read(&task->signal->live);
