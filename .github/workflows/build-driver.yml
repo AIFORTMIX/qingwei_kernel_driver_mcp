@@ -232,12 +232,13 @@ jobs:
           echo "=== 配置内核 (gki_defconfig) ==="
           make ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- gki_defconfig
 
-          # 确保禁用 BTF（避免 resolve_btfids 被需要）
+          # 确保禁用 BTF(避免 resolve_btfids 被需要)
           scripts/config --disable DEBUG_INFO_BTF
 
-          # 启用 MODVERSIONS（匹配设备内核的 vermagic 标志）
-          # 设备内核通常带 modversions，模块必须一致否则 insmod 报 ENOENT
-          scripts/config --enable MODVERSIONS
+          # 禁用 MODVERSIONS - 避免 CRC 不匹配导致立即崩溃
+          # 目标内核虽然有 modversions,但我们没有正确的 Module.symvers
+          # 禁用后模块不进行符号 CRC 校验,vermagic 匹配即可加载
+          scripts/config --disable MODVERSIONS
 
           echo "=== 准备模块构建环境 (modules_prepare) ==="
           make ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- modules_prepare -j$(nproc)
