@@ -79,6 +79,7 @@ jobs:
   build-ko:
     needs: config-summary
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -87,8 +88,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y bc bison flex libssl-dev libelf-dev \
-            dwarves ccache build-essential git curl \
-            gcc-aarch64-linux-gnu
+            dwarves ccache build-essential git curl python3
 
       - name: Setup ccache
         run: |
@@ -125,74 +125,95 @@ jobs:
           repo sync -c -j"$(nproc --all)" --no-tags --fail-fast
           echo "内核源码同步完成: common-${FORMATTED_BRANCH}"
 
+      - name: Download AOSP build-tools
+        run: |
+          set -euo pipefail
+          git clone https://android.googlesource.com/kernel/prebuilts/build-tools \
+            -b main-kernel-build-2024 --depth 1 \
+            "${GITHUB_WORKSPACE}/kernel-build-tools"
+          echo "AOSP build-tools downloaded"
+
       - name: Write localversion suffix
         run: |
-          # repo sync 后内核源码在 kernel-source/common/ 子目录
           KERNEL_ROOT="${GITHUB_WORKSPACE}/kernel-source/common"
           if [ -n "${{ env.LOCALVERSION }}" ]; then
             echo "${{ env.LOCALVERSION }}" > "${KERNEL_ROOT}/localversion-qingwei"
             echo "localversion written: ${{ env.LOCALVERSION }}"
           fi
 
-      - name: Prepare out-of-tree module build
+      - name: Prepare external module source
         run: |
-          KERNEL_ROOT="${GITHUB_WORKSPACE}/kernel-source/common"
-          MODULE_DIR="${KERNEL_ROOT}/drivers/qingwei_mcp"
-          
+          MODULE_DIR="${GITHUB_WORKSPACE}/qingwei_mcp_module"
           mkdir -p "${MODULE_DIR}"
           cp -r driver/* "${MODULE_DIR}/"
-          
+
           echo "Module source prepared at: ${MODULE_DIR}"
           ls -la "${MODULE_DIR}/"
 
-      - name: Build kernel module (out-of-tree)
+      - name: Build kernel module via build.sh
         run: |
-          KERNEL_ROOT="${GITHUB_WORKSPACE}/kernel-source/common"
-          MODULE_DIR="${KERNEL_ROOT}/drivers/qingwei_mcp"
-          
-          cd "${KERNEL_ROOT}"
-          
-          # Use GKI defconfig
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- gki_defconfig
-          
-          # Build the external module
-          make ARCH=arm64 \
-               CROSS_COMPILE=aarch64-linux-gnu- \
-               CC="ccache aarch64-linux-gnu-gcc" \
-               M="${MODULE_DIR}" \
-               modules -j$(nproc)
-          
-          echo "Build complete. Searching for .ko..."
-          find "${MODULE_DIR}" -name "*.ko" -type f
+          set -euo pipefail
+          KERNEL_ROOT="${GITHUB_WORKSPACE}/kernel-source"
+          MODULE_DIR="${GITHUB_WORKSPACE}/qingwei_mcp_module"
+          DIST_DIR="${GITHUB_WORKSPACE}/ko-output"
+          mkdir -p "${DIST_DIR}"
 
-      - name: Generate metadata
+          cd "${KERNEL_ROOT}"
+
+          echo "=== 开始编译 (build.sh + EXT_MODULES) ==="
+          echo "KERNEL_ROOT: ${KERNEL_ROOT}"
+          echo "EXT_MODULES: ${MODULE_DIR}"
+          echo "DIST_DIR:    ${DIST_DIR}"
+
+          EXT_MODULES="${MODULE_DIR}" \
+          DIST_DIR="${DIST_DIR}" \
+          LTO=thin \
+          build/build.sh CC="/usr/bin/ccache clang"
+
+          echo "=== 编译完成 ==="
+          echo "搜索 .ko 文件..."
+          find "${DIST_DIR}" "${MODULE_DIR}" "${KERNEL_ROOT}" \
+            -type f -name "qingwei_mcp.ko" 2>/dev/null || true
+
+      - name: Collect and generate metadata
         run: |
-          MODULE_DIR="${GITHUB_WORKSPACE}/kernel-source/common/drivers/qingwei_mcp"
-          KO_FILE=$(find "${MODULE_DIR}" -name "qingwei_mcp.ko" -type f | head -1)
-          
+          set -euo pipefail
+          DIST_DIR="${GITHUB_WORKSPACE}/ko-output"
+          MODULE_DIR="${GITHUB_WORKSPACE}/qingwei_mcp_module"
+          KERNEL_ROOT="${GITHUB_WORKSPACE}/kernel-source"
+
+          # 搜索 .ko 文件 (优先级: dist > 模块目录 > 内核树)
+          KO_FILE=$(find "${DIST_DIR}" "${MODULE_DIR}" "${KERNEL_ROOT}" \
+            -type f -name "qingwei_mcp.ko" 2>/dev/null | head -1)
+
           if [ -z "${KO_FILE}" ]; then
             echo "ERROR: qingwei_mcp.ko not found!"
             exit 1
           fi
-          
-          echo "=== 轻微 MCP (qingwei_mcp) Driver Build Metadata ===" > metadata.txt
-          echo "Build Date: $(date -u)" >> metadata.txt
-          echo "Android Version: ${{ env.ANDROID_VERSION }}" >> metadata.txt
-          echo "Kernel Version: ${{ env.KERNEL_VERSION }}.${{ env.SUB_LEVEL }}" >> metadata.txt
-          echo "Security Patch: ${{ env.OS_PATCH_LEVEL }}" >> metadata.txt
-          echo "SHA256: $(sha256sum ${KO_FILE} | cut -d' ' -f1)" >> metadata.txt
-          echo "Size: $(stat -c%s ${KO_FILE}) bytes" >> metadata.txt
-          modinfo "${KO_FILE}" 2>/dev/null >> metadata.txt || true
-          
-          cat metadata.txt
+
+          echo "Found .ko at: ${KO_FILE}"
+
+          # 复制到输出目录
+          cp "${KO_FILE}" "${DIST_DIR}/qingwei_mcp.ko"
+
+          echo "=== 轻微 MCP (qingwei_mcp) Driver Build Metadata ===" > "${DIST_DIR}/metadata.txt"
+          echo "Build Date: $(date -u)" >> "${DIST_DIR}/metadata.txt"
+          echo "Android Version: ${{ env.ANDROID_VERSION }}" >> "${DIST_DIR}/metadata.txt"
+          echo "Kernel Version: ${{ env.KERNEL_VERSION }}.${{ env.SUB_LEVEL }}" >> "${DIST_DIR}/metadata.txt"
+          echo "Security Patch: ${{ env.OS_PATCH_LEVEL }}" >> "${DIST_DIR}/metadata.txt"
+          echo "SHA256: $(sha256sum ${DIST_DIR}/qingwei_mcp.ko | cut -d' ' -f1)" >> "${DIST_DIR}/metadata.txt"
+          echo "Size: $(stat -c%s ${DIST_DIR}/qingwei_mcp.ko) bytes" >> "${DIST_DIR}/metadata.txt"
+          modinfo "${DIST_DIR}/qingwei_mcp.ko" 2>/dev/null >> "${DIST_DIR}/metadata.txt" || true
+
+          cat "${DIST_DIR}/metadata.txt"
 
       - name: Upload .ko artifact
         uses: actions/upload-artifact@v4
         with:
           name: qingwei_mcp-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
           path: |
-            kernel-source/common/drivers/qingwei_mcp/qingwei_mcp.ko
-            metadata.txt
+            ko-output/qingwei_mcp.ko
+            ko-output/metadata.txt
           retention-days: 30
 
       - name: Upload debug symbols
@@ -200,6 +221,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: qingwei_mcp-debug-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
-          path: kernel-source/common/drivers/qingwei_mcp/*.ko.debug
+          path: ko-output/*.ko.debug
           retention-days: 30
           if-no-files-found: ignore
