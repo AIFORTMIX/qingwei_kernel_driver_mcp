@@ -194,7 +194,7 @@ jobs:
           cd "${KERNEL_ROOT}"
 
           echo "=== 配置内核 (gki_defconfig) ==="
-          make ARCH=arm64 CC=clang gki_defconfig
+          make ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- gki_defconfig
 
           # 确保禁用 BTF（避免 resolve_btfids 被需要）
           scripts/config --disable DEBUG_INFO_BTF
@@ -221,7 +221,7 @@ jobs:
           fi
 
           echo "=== 准备模块构建环境 (modules_prepare) ==="
-          make ARCH=arm64 CC=clang modules_prepare -j$(nproc)
+          make ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- modules_prepare -j$(nproc)
 
           echo "内核构建环境准备完成"
 
