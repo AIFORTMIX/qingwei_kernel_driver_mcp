@@ -298,8 +298,9 @@ jobs:
           echo "KERNEL_ROOT: ${KERNEL_ROOT}"
           echo "MODULE_DIR:  ${MODULE_DIR}"
 
+          # 不使用 ccache：避免缓存包装干扰内核构建系统的编译器特性检测
           make ARCH=arm64 \
-               CC="ccache clang" \
+               CC=clang \
                CROSS_COMPILE=aarch64-linux-gnu- \
                LDFLAGS=-fuse-ld=lld \
                M="${MODULE_DIR}" \
@@ -318,16 +319,23 @@ jobs:
           cp "${KO_FILE}" "${DIST_DIR}/qingwei_mcp.ko"
           echo "模块已复制: ${DIST_DIR}/qingwei_mcp.ko"
 
-          # 显示 strip 前大小
-          echo "Strip 前大小: $(stat -c%s ${DIST_DIR}/qingwei_mcp.ko) bytes"
-          # 使用 llvm-strip（而非 GNU strip）处理 clang 编译的 ARM64 ELF，避免文件损坏
-          llvm-strip --strip-debug "${DIST_DIR}/qingwei_mcp.ko"
-          echo "Strip 后大小: $(stat -c%s ${DIST_DIR}/qingwei_mcp.ko) bytes"
-          # 验证 strip 后文件有效性
+          # 验证 .ko 文件有效性（不做 strip，避免破坏 ELF 结构）
+          echo "模块大小: $(stat -c%s ${DIST_DIR}/qingwei_mcp.ko) bytes"
           if ! file "${DIST_DIR}/qingwei_mcp.ko" | grep -q "ELF"; then
-            echo "ERROR: strip 后文件不是有效 ELF，可能已损坏！"
+            echo "ERROR: .ko 文件不是有效 ELF！"
             exit 1
           fi
+
+          # 验证关键 section 存在
+          echo "=== ELF section 验证 ==="
+          SECTIONS=$(readelf -S "${DIST_DIR}/qingwei_mcp.ko" 2>/dev/null | grep -c '\.text\|\.init\.text\|\.modinfo\|__versions\|\.gnu.linkonce.this_module' || true)
+          echo "关键 section 数量: ${SECTIONS}"
+          if [ "${SECTIONS}" -lt 4 ]; then
+            echo "ERROR: .ko 缺少关键 ELF section，模块可能不完整！"
+            readelf -S "${DIST_DIR}/qingwei_mcp.ko" || true
+            exit 1
+          fi
+          readelf -S "${DIST_DIR}/qingwei_mcp.ko" | head -30
 
       - name: Generate metadata
         run: |
