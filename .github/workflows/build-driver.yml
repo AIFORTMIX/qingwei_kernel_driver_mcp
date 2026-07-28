@@ -314,6 +314,11 @@ jobs:
           cp "${KO_FILE}" "${DIST_DIR}/qingwei_mcp.ko"
           echo "模块已复制: ${DIST_DIR}/qingwei_mcp.ko"
 
+          # 显示 strip 前大小
+          echo "Strip 前大小: $(stat -c%s ${DIST_DIR}/qingwei_mcp.ko) bytes"
+          aarch64-linux-gnu-strip --strip-debug "${DIST_DIR}/qingwei_mcp.ko"
+          echo "Strip 后大小: $(stat -c%s ${DIST_DIR}/qingwei_mcp.ko) bytes"
+
       - name: Generate metadata
         run: |
           set -euo pipefail
