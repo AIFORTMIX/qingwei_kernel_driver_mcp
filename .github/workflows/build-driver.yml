@@ -88,7 +88,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y bc bison flex libssl-dev libelf-dev \
-            dwarves ccache build-essential git curl python3 \
+            dwarves ccache build-essential git curl python3 zlib1g-dev \
             clang lld gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
 
       - name: Setup ccache
@@ -153,8 +153,9 @@ jobs:
           echo "=== 配置内核 (gki_defconfig) ==="
           make ARCH=arm64 CC=clang gki_defconfig
 
-          echo "=== 准备构建环境 (生成 asm-offsets.h 等头文件) ==="
-          make ARCH=arm64 CC=clang prepare -j$(nproc)
+          echo "=== 准备模块构建环境 (modules_prepare) ==="
+          echo "使用 modules_prepare 替代 prepare，避免构建 resolve_btfids 等不必要的主机工具"
+          make ARCH=arm64 CC=clang modules_prepare -j$(nproc)
 
           echo "内核构建环境准备完成"
 
