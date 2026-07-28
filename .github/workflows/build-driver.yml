@@ -89,7 +89,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bc bison flex libssl-dev libelf-dev \
             dwarves ccache build-essential git curl python3 zlib1g-dev \
-            clang lld gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+            clang lld gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            pkg-config libzstd-dev
 
       - name: Setup ccache
         run: |
@@ -125,6 +126,18 @@ jobs:
 
           repo sync -c -j"$(nproc --all)" --no-tags --fail-fast
           echo "内核源码同步完成: common-${FORMATTED_BRANCH}"
+
+      - name: Patch resolve_btfids for host linking
+        run: |
+          set -euo pipefail
+          MAKEFILE="${GITHUB_WORKSPACE}/kernel-source/common/tools/bpf/resolve_btfids/Makefile"
+          if [ -f "${MAKEFILE}" ]; then
+            # 非静态链接的 fallback 缺少 -lzstd，现代 libelf 依赖 zstd
+            sed -i 's/|| echo -lelf)/|| echo -lelf -lzstd -lz)/g' "${MAKEFILE}"
+            echo "已修补 resolve_btfids Makefile (添加 -lzstd -lz)"
+          else
+            echo "resolve_btfids Makefile 不存在，跳过修补"
+          fi
 
       - name: Write localversion suffix
         run: |
