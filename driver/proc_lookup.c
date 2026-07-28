@@ -2,6 +2,7 @@
 #define pr_fmt(fmt) "qingwei_mcp_proc: " fmt
 
 #include <linux/sched.h>
+#include <linux/sched/signal.h>
 #include <linux/sched/mm.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
