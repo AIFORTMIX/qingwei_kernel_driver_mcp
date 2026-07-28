@@ -32,10 +32,14 @@ on:
         description: '安全补丁日期 (YYYY-MM)'
         required: false
         default: '2025-01'
-      localversion_suffix:
-        description: '追加到 UTS_RELEASE 的 localversion 后缀 (用于匹配 uname -r)'
+      kernel_release:
+        description: '目标设备 uname -r 的完整值 (留空则自动生成)'
         required: false
-        default: '-qw'
+        default: ''
+      localversion_suffix:
+        description: '追加到 UTS_RELEASE 的 localversion 后缀 (仅 kernel_release 留空时生效)'
+        required: false
+        default: ''
       debug:
         description: '调试构建 (含调试符号)'
         required: false
@@ -52,7 +56,8 @@ env:
   KERNEL_VERSION: ${{ inputs.kernel_version || '6.1' }}
   SUB_LEVEL: ${{ inputs.sub_level || '0' }}
   OS_PATCH_LEVEL: ${{ inputs.os_patch_level || '2025-01' }}
-  LOCALVERSION: ${{ inputs.localversion_suffix || '-qingwei' }}
+  KERNEL_RELEASE: ${{ inputs.kernel_release || '' }}
+  LOCALVERSION: ${{ inputs.localversion_suffix || '' }}
 
 jobs:
   config-summary:
@@ -72,6 +77,7 @@ jobs:
           echo "Kernel Version:   ${{ env.KERNEL_VERSION }}.${{ env.SUB_LEVEL }}"
           echo "Security Patch:   ${{ env.OS_PATCH_LEVEL }}"
           echo "GKI Branch:       ${BRANCH}"
+          echo "Kernel Release:   ${{ env.KERNEL_RELEASE || '(auto-generate)' }}"
           echo "Localversion:     ${{ env.LOCALVERSION }}"
           echo "Debug Build:      ${{ inputs.debug || 'false' }}"
           echo "============================================"
@@ -193,25 +199,25 @@ jobs:
           # 确保禁用 BTF（避免 resolve_btfids 被需要）
           scripts/config --disable DEBUG_INFO_BTF
 
-          # 截断内核版本字符串，确保加上 localversion 后不超过 64 字符
+          # 设置精确的 kernel.release（用于匹配目标设备 uname -r）
+          TARGET_RELEASE="${{ env.KERNEL_RELEASE }}"
           LOCALVERSION="${{ env.LOCALVERSION }}"
-          LV_LEN=${#LOCALVERSION}
-          MAX_BASE=$((64 - LV_LEN))
 
-          KERNEL_RELEASE=$(cat include/config/kernel.release)
-          echo "原始 kernel.release: ${KERNEL_RELEASE}"
-          echo "长度: ${#KERNEL_RELEASE}, 最大允许: ${MAX_BASE}"
+          if [ -n "${TARGET_RELEASE}" ]; then
+            # 用户提供了完整的 uname -r 值，直接写入
+            echo "${TARGET_RELEASE}" > include/config/kernel.release
+            echo "kernel.release 设为: ${TARGET_RELEASE} (长度: ${#TARGET_RELEASE})"
+            # 不写 localversion 文件，避免追加额外后缀
+          else
+            # 未提供完整值，自动生成并可用 localversion 后缀
+            AUTO_RELEASE="${{ env.KERNEL_VERSION }}.${{ env.SUB_LEVEL }}-${{ env.ANDROID_VERSION }}-${{ env.OS_PATCH_LEVEL }}"
+            echo "${AUTO_RELEASE}" > include/config/kernel.release
+            echo "kernel.release 自动生成: ${AUTO_RELEASE}"
 
-          if [ ${#KERNEL_RELEASE} -gt ${MAX_BASE} ]; then
-            TRUNCATED="${KERNEL_RELEASE:0:${MAX_BASE}}"
-            echo "${TRUNCATED}" > include/config/kernel.release
-            echo "已截断为: ${TRUNCATED} (长度: ${#TRUNCATED})"
-          fi
-
-          # 写入 localversion 后缀
-          if [ -n "${LOCALVERSION}" ]; then
-            echo "${LOCALVERSION}" > localversion-qingwei
-            echo "localversion written: ${LOCALVERSION}"
+            if [ -n "${LOCALVERSION}" ]; then
+              echo "${LOCALVERSION}" > localversion-qingwei
+              echo "localversion written: ${LOCALVERSION}"
+            fi
           fi
 
           echo "=== 准备模块构建环境 (modules_prepare) ==="
