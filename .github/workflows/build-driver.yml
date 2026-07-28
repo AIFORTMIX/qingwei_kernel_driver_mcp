@@ -127,16 +127,48 @@ jobs:
           repo sync -c -j"$(nproc --all)" --no-tags --fail-fast
           echo "内核源码同步完成: common-${FORMATTED_BRANCH}"
 
-      - name: Patch resolve_btfids for host linking
+      - name: Patch kernel to skip resolve_btfids
         run: |
           set -euo pipefail
-          MAKEFILE="${GITHUB_WORKSPACE}/kernel-source/common/tools/bpf/resolve_btfids/Makefile"
-          if [ -f "${MAKEFILE}" ]; then
-            # 非静态链接的 fallback 缺少 -lzstd，现代 libelf 依赖 zstd
-            sed -i 's/|| echo -lelf)/|| echo -lelf -lzstd -lz)/g' "${MAKEFILE}"
-            echo "已修补 resolve_btfids Makefile (添加 -lzstd -lz)"
-          else
-            echo "resolve_btfids Makefile 不存在，跳过修补"
+          KERNEL_ROOT="${GITHUB_WORKSPACE}/kernel-source/common"
+
+          echo "=== 修补内核：跳过 resolve_btfids 构建 ==="
+
+          # 策略：从顶层 Makefile 的 prepare 依赖中移除 resolve_btfids
+          # 外部模块编译不需要 BTF ID 解析工具
+          MAKEFILE="${KERNEL_ROOT}/Makefile"
+
+          # 查看当前 resolve_btfids 相关行（用于调试）
+          echo "--- Makefile 中 resolve_btfids 相关行 ---"
+          grep -n 'resolve_btfids' "${MAKEFILE}" || echo "(未找到)"
+          echo "-------------------------------------------"
+
+          # 移除 prepare 对 resolve_btfids 的依赖
+          # 匹配各种可能的格式: "prepare: ... resolve_btfids" 或 "prepare: resolve_btfids"
+          python3 -c "
+          import re
+          with open('${MAKEFILE}', 'r') as f:
+              content = f.read()
+          # 从 prepare 依赖行中移除 resolve_btfids
+          content = re.sub(r'(prepare\s*:[^=\n]*)\bresolve_btfids\b', r'\1', content)
+          # 清理多余空格
+          content = re.sub(r'  +', ' ', content)
+          with open('${MAKEFILE}', 'w') as f:
+              f.write(content)
+          print('已从 prepare 依赖中移除 resolve_btfids')
+          "
+
+          echo "--- 修补后 resolve_btfids 相关行 ---"
+          grep -n 'resolve_btfids' "${MAKEFILE}" || echo "(未找到)"
+          echo "-------------------------------------------"
+
+          # 保险：同时修补 resolve_btfids 自身的 Makefile，修复链接
+          BTFIDS_MK="${KERNEL_ROOT}/tools/bpf/resolve_btfids/Makefile"
+          if [ -f "${BTFIDS_MK}" ]; then
+            # 将 LIBELF_LIBS 的非静态 fallback 从 -lelf 改为 -lelf -lzstd -lz
+            sed -i 's/|| echo -lelf)/|| echo -lelf -lzstd -lz)/g' "${BTFIDS_MK}"
+            echo "已修补 resolve_btfids/Makefile 链接参数 (fallback 添加 -lzstd -lz)"
+            grep -n 'echo -lelf' "${BTFIDS_MK}" || true
           fi
 
       - name: Write localversion suffix
@@ -166,8 +198,10 @@ jobs:
           echo "=== 配置内核 (gki_defconfig) ==="
           make ARCH=arm64 CC=clang gki_defconfig
 
+          # 确保禁用 BTF（避免 resolve_btfids 被需要）
+          scripts/config --disable DEBUG_INFO_BTF
+
           echo "=== 准备模块构建环境 (modules_prepare) ==="
-          echo "使用 modules_prepare 替代 prepare，避免构建 resolve_btfids 等不必要的主机工具"
           make ARCH=arm64 CC=clang modules_prepare -j$(nproc)
 
           echo "内核构建环境准备完成"
