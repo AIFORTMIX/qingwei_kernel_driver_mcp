@@ -2038,12 +2038,27 @@ static int __init qingwei_mcp_init(void)
     else
         pr_info("init step 4 - HWBP initialized OK\n");
 
+    /* 动态解析 copy_to_kernel_nofault（GKI 内核可能未导出此符号） */
     pr_info("init step 5 - attempting module name hide\n");
-    if (copy_to_kernel_nofault((char *)THIS_MODULE->name, QW_MODULE_HIDE,
-                               strlen(QW_MODULE_HIDE) + 1) == 0) {
-        pr_info("init step 6 - module hidden as '%s'\n", QW_MODULE_HIDE);
-    } else {
-        pr_info("init step 6 - name hide skipped (read-only memory)\n");
+    {
+        typedef long (*copy_to_kernel_nofault_fn)(void *, const void *, size_t);
+        struct kprobe kp_hide;
+        copy_to_kernel_nofault_fn fn;
+
+        memset(&kp_hide, 0, sizeof(kp_hide));
+        kp_hide.symbol_name = "copy_to_kernel_nofault";
+        if (register_kprobe(&kp_hide) == 0) {
+            fn = (copy_to_kernel_nofault_fn)kp_hide.addr;
+            unregister_kprobe(&kp_hide);
+            if (fn((char *)THIS_MODULE->name, QW_MODULE_HIDE,
+                   strlen(QW_MODULE_HIDE) + 1) == 0) {
+                pr_info("init step 6 - module hidden as '%s'\n", QW_MODULE_HIDE);
+            } else {
+                pr_info("init step 6 - name hide failed (read-only memory)\n");
+            }
+        } else {
+            pr_info("init step 6 - name hide skipped (symbol not exported)\n");
+        }
     }
 
     pr_info("qingwei_mcp driver loaded with %d ioctl commands (1-24)\n", 24);
