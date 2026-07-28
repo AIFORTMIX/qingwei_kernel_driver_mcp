@@ -845,17 +845,6 @@ static int hw_bp_multi_detect_count(void)
     return num_bp;
 }
 
-static int hw_bp_get_available_count(void)
-{
-    int i, used = 0;
-    mutex_lock(&g_hwbp_mgr_lock);
-    for (i = 0; i < g_hw_bp_max; i++)
-        if (g_bp_slots[i].active)
-            used++;
-    mutex_unlock(&g_hwbp_mgr_lock);
-    return g_hw_bp_max - used;
-}
-
 static int hw_bp_get_usage(qingwei_mcp_bp_usage_t *usage)
 {
     int i, used_hw = 0;
