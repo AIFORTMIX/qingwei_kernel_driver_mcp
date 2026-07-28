@@ -39,6 +39,7 @@ static unsigned long resolve_symbol(const char *name)
     memset(&kp, 0, sizeof(kp));
     kp.symbol_name = name;
 
+    pr_info("HWBP: resolving symbol '%s' via kprobe...\n", name);
     ret = register_kprobe(&kp);
     if (ret < 0) {
         pr_warn("HWBP: failed to resolve symbol '%s' (ret=%d)\n", name, ret);
@@ -47,6 +48,14 @@ static unsigned long resolve_symbol(const char *name)
 
     addr = (unsigned long)kp.addr;
     unregister_kprobe(&kp);
+
+    /* 验证解析到的地址合理性 */
+    if (addr < PAGE_SIZE) {
+        pr_warn("HWBP: resolved address 0x%lx for '%s' is invalid (too low)\n",
+                addr, name);
+        return 0;
+    }
+
     pr_info("HWBP: resolved %s -> 0x%lx\n", name, addr);
     return addr;
 }
@@ -187,22 +196,28 @@ int hw_bp_multi_init(void)
 {
     int i;
 
+    pr_info("HWBP: init step 1 - resolving register_user_hw_breakpoint\n");
     g_register_user_hw_bp = (register_user_hw_bp_fn)
         resolve_symbol("register_user_hw_breakpoint");
+
+    pr_info("HWBP: init step 2 - resolving unregister_hw_breakpoint\n");
     g_unregister_hw_bp = (unregister_hw_bp_fn)
         resolve_symbol("unregister_hw_breakpoint");
 
     if (g_register_user_hw_bp && g_unregister_hw_bp) {
-        pr_info("HWBP: symbols resolved via kprobe\n");
+        pr_info("HWBP: init step 3 - symbols resolved OK\n");
     } else {
-        pr_warn("HWBP: symbols not found, HWBP disabled\n");
+        pr_warn("HWBP: init step 3 - symbols not found, HWBP disabled\n");
         return -ENOSYS;
     }
 
+    pr_info("HWBP: init step 4 - detecting hardware breakpoint count\n");
     g_hwbp_count = hw_bp_multi_detect_count();
     pr_info("HWBP: detected %d breakpoint slots, %d watchpoint slots\n",
             g_hw_bp_max, g_hw_wp_max);
 
+    pr_info("HWBP: init step 5 - allocating snapshot buffers (%d slots x %d entries)\n",
+            QW_MAX_HWBP, QW_SNAPSHOT_CACHE_SIZE);
     for (i = 0; i < QW_MAX_HWBP; i++) {
         memset(&g_bp_slots[i], 0, sizeof(g_bp_slots[i]));
         spin_lock_init(&g_bp_slots[i].snap_lock);
@@ -214,7 +229,7 @@ int hw_bp_multi_init(void)
         }
     }
 
-    pr_info("HWBP: initialized %d slots with snapshot buffers\n", QW_MAX_HWBP);
+    pr_info("HWBP: init complete - %d slots ready\n", QW_MAX_HWBP);
     return 0;
 }
 

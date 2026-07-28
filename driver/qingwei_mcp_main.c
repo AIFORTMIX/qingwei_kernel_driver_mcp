@@ -746,20 +746,33 @@ static struct miscdevice misc_dev = {
 /* ---------- 模块初始/退出 ---------- */
 static int __init qingwei_mcp_init(void)
 {
-    int ret = misc_register(&misc_dev);
+    int ret;
+
+    pr_info("init step 1 - registering misc device\n");
+    ret = misc_register(&misc_dev);
     if (ret) {
-        pr_err("misc_register failed\n");
+        pr_err("misc_register failed (ret=%d)\n", ret);
         return ret;
     }
+    pr_info("init step 2 - misc device registered OK\n");
 
     /* 初始化多硬件断点系统 */
+    pr_info("init step 3 - initializing HWBP subsystem\n");
     ret = hw_bp_multi_init();
     if (ret < 0)
-        pr_warn("HWBP init failed, hardware breakpoints disabled\n");
+        pr_warn("HWBP init failed (ret=%d), hardware breakpoints disabled\n", ret);
+    else
+        pr_info("init step 4 - HWBP initialized OK\n");
 
-    strcpy((char *)THIS_MODULE->name, QW_MODULE_HIDE);
-    pr_info("device /dev/%s ready (shown as '%s' in lsmod)\n",
-            QINGWEI_DEVICE_NAME, QW_MODULE_HIDE);
+    /* 安全地尝试隐藏模块名：使用 copy_to_kernel_nofault 避免只读内存 panic */
+    pr_info("init step 5 - attempting module name hide\n");
+    if (copy_to_kernel_nofault((char *)THIS_MODULE->name, QW_MODULE_HIDE,
+                               strlen(QW_MODULE_HIDE) + 1) == 0) {
+        pr_info("init step 6 - module hidden as '%s'\n", QW_MODULE_HIDE);
+    } else {
+        pr_info("init step 6 - name hide skipped (read-only memory)\n");
+    }
+
     pr_info("qingwei_mcp driver loaded with %d ioctl commands (1-24)\n", 24);
     return 0;
 }
