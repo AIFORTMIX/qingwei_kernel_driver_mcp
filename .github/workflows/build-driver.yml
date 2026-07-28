@@ -235,6 +235,10 @@ jobs:
           # 确保禁用 BTF（避免 resolve_btfids 被需要）
           scripts/config --disable DEBUG_INFO_BTF
 
+          # 启用 MODVERSIONS（匹配设备内核的 vermagic 标志）
+          # 设备内核通常带 modversions，模块必须一致否则 insmod 报 ENOENT
+          scripts/config --enable MODVERSIONS
+
           echo "=== 准备模块构建环境 (modules_prepare) ==="
           make ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- modules_prepare -j$(nproc)
 
