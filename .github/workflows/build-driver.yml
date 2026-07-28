@@ -1,0 +1,196 @@
+name: Build Kernel Driver
+
+on:
+  workflow_dispatch:
+    inputs:
+      android_version:
+        description: 'Android 版本'
+        required: true
+        type: choice
+        options:
+          - android13
+          - android14
+          - android15
+          - android16
+        default: 'android14'
+      kernel_version:
+        description: '内核版本'
+        required: true
+        type: choice
+        options:
+          - "5.10"
+          - "5.15"
+          - "6.1"
+          - "6.6"
+          - "6.12"
+        default: '6.1'
+      sub_level:
+        description: '内核子版本号 (sub_level)'
+        required: false
+        default: '0'
+      os_patch_level:
+        description: '安全补丁日期 (YYYY-MM)'
+        required: false
+        default: '2025-01'
+      localversion_suffix:
+        description: '追加到 UTS_RELEASE 的 localversion 后缀 (用于匹配 uname -r)'
+        required: false
+        default: '-qingwei'
+      debug:
+        description: '调试构建 (含调试符号)'
+        required: false
+        type: boolean
+        default: false
+
+  push:
+    paths:
+      - 'driver/**'
+    branches: [main]
+
+env:
+  ANDROID_VERSION: ${{ inputs.android_version || 'android14' }}
+  KERNEL_VERSION: ${{ inputs.kernel_version || '6.1' }}
+  SUB_LEVEL: ${{ inputs.sub_level || '0' }}
+  OS_PATCH_LEVEL: ${{ inputs.os_patch_level || '2025-01' }}
+  LOCALVERSION: ${{ inputs.localversion_suffix || '-qingwei' }}
+
+jobs:
+  config-summary:
+    runs-on: ubuntu-latest
+    outputs:
+      gki_branch: ${{ steps.calc.outputs.branch }}
+    steps:
+      - name: Build Configuration Summary
+        id: calc
+        run: |
+          BRANCH="${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}-${{ env.OS_PATCH_LEVEL }}"
+          echo "branch=${BRANCH}" >> $GITHUB_OUTPUT
+          echo "============================================"
+          echo "  轻微 MCP (qingwei_mcp) Driver Build"
+          echo "============================================"
+          echo "Android Version:  ${{ env.ANDROID_VERSION }}"
+          echo "Kernel Version:   ${{ env.KERNEL_VERSION }}.${{ env.SUB_LEVEL }}"
+          echo "Security Patch:   ${{ env.OS_PATCH_LEVEL }}"
+          echo "GKI Branch:       ${BRANCH}"
+          echo "Localversion:     ${{ env.LOCALVERSION }}"
+          echo "Debug Build:      ${{ inputs.debug || 'false' }}"
+          echo "============================================"
+
+  build-ko:
+    needs: config-summary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev \
+            dwarves ccache build-essential git curl \
+            gcc-aarch64-linux-gnu
+
+      - name: Setup ccache
+        run: |
+          echo "CCACHE_DIR=${HOME}/.ccache" >> $GITHUB_ENV
+          ccache -M 2G
+          ccache -z
+
+      - name: Install repo tool
+        run: |
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          echo "~/bin" >> $GITHUB_PATH
+
+      - name: Fetch AOSP GKI kernel source
+        run: |
+          BRANCH="${{ needs.config-summary.outputs.gki_branch }}"
+          KERNEL_ROOT="${GITHUB_WORKSPACE}/kernel-source"
+          mkdir -p "${KERNEL_ROOT}"
+          cd "${KERNEL_ROOT}"
+          
+          git init
+          git remote add origin "https://android.googlesource.com/kernel/common"
+          git fetch --depth=1 origin "common-${BRANCH}"
+          git checkout FETCH_HEAD
+          
+          echo "Kernel source synced for branch: common-${BRANCH}"
+
+      - name: Write localversion suffix
+        run: |
+          KERNEL_ROOT="${GITHUB_WORKSPACE}/kernel-source"
+          if [ -n "${{ env.LOCALVERSION }}" ]; then
+            echo "${{ env.LOCALVERSION }}" > "${KERNEL_ROOT}/localversion-qingwei"
+            echo "localversion written: ${{ env.LOCALVERSION }}"
+          fi
+
+      - name: Prepare out-of-tree module build
+        run: |
+          KERNEL_ROOT="${GITHUB_WORKSPACE}/kernel-source"
+          MODULE_DIR="${KERNEL_ROOT}/drivers/qingwei_mcp"
+          
+          mkdir -p "${MODULE_DIR}"
+          cp -r driver/* "${MODULE_DIR}/"
+          
+          echo "Module source prepared at: ${MODULE_DIR}"
+          ls -la "${MODULE_DIR}/"
+
+      - name: Build kernel module (out-of-tree)
+        run: |
+          KERNEL_ROOT="${GITHUB_WORKSPACE}/kernel-source"
+          MODULE_DIR="${KERNEL_ROOT}/drivers/qingwei_mcp"
+          
+          cd "${KERNEL_ROOT}"
+          
+          # Use GKI defconfig
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- gki_defconfig
+          
+          # Build the external module
+          make ARCH=arm64 \
+               CROSS_COMPILE=aarch64-linux-gnu- \
+               CC="ccache aarch64-linux-gnu-gcc" \
+               M="${MODULE_DIR}" \
+               modules -j$(nproc)
+          
+          echo "Build complete. Searching for .ko..."
+          find "${MODULE_DIR}" -name "*.ko" -type f
+
+      - name: Generate metadata
+        run: |
+          MODULE_DIR="${GITHUB_WORKSPACE}/kernel-source/drivers/qingwei_mcp"
+          KO_FILE=$(find "${MODULE_DIR}" -name "qingwei_mcp.ko" -type f | head -1)
+          
+          if [ -z "${KO_FILE}" ]; then
+            echo "ERROR: qingwei_mcp.ko not found!"
+            exit 1
+          fi
+          
+          echo "=== 轻微 MCP (qingwei_mcp) Driver Build Metadata ===" > metadata.txt
+          echo "Build Date: $(date -u)" >> metadata.txt
+          echo "Android Version: ${{ env.ANDROID_VERSION }}" >> metadata.txt
+          echo "Kernel Version: ${{ env.KERNEL_VERSION }}.${{ env.SUB_LEVEL }}" >> metadata.txt
+          echo "Security Patch: ${{ env.OS_PATCH_LEVEL }}" >> metadata.txt
+          echo "SHA256: $(sha256sum ${KO_FILE} | cut -d' ' -f1)" >> metadata.txt
+          echo "Size: $(stat -c%s ${KO_FILE}) bytes" >> metadata.txt
+          modinfo "${KO_FILE}" 2>/dev/null >> metadata.txt || true
+          
+          cat metadata.txt
+
+      - name: Upload .ko artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: qingwei_mcp-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+          path: |
+            kernel-source/drivers/qingwei_mcp/qingwei_mcp.ko
+            metadata.txt
+          retention-days: 30
+
+      - name: Upload debug symbols
+        if: ${{ inputs.debug }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: qingwei_mcp-debug-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+          path: kernel-source/drivers/qingwei_mcp/*.ko.debug
+          retention-days: 30
+          if-no-files-found: ignore

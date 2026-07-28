@@ -1,0 +1,5 @@
+obj-m := qingwei_mcp.o
+qingwei_mcp-objs := qingwei_mcp_main.o proc_lookup.o process_enum.o \
+    module_enum.o vma_enum.o hw_bp_multi.o sw_bp.o \
+    mem_search.o callstack.o thread_enum.o
+ccflags-y := -DCONFIG_HAVE_HW_BREAKPOINT

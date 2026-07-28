@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-app:
+    uses: ./.github/workflows/build-app.yml
+
+  build-driver-matrix:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - android: android14
+            kernel: "6.1"
+            patch: "2025-01"
+          - android: android14
+            kernel: "6.6"
+            patch: "2025-01"
+          - android: android15
+            kernel: "6.6"
+            patch: "2025-01"
+    uses: ./.github/workflows/build-driver.yml
+    with:
+      android_version: ${{ matrix.android }}
+      kernel_version: ${{ matrix.kernel }}
+      os_patch_level: ${{ matrix.patch }}
+
+  release:
+    needs: [build-app, build-driver-matrix]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: List downloaded artifacts
+        run: find artifacts/ -type f
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/**/*.apk
+            artifacts/**/*.ko
+            artifacts/**/metadata.txt
+          generate_release_notes: true
+          draft: false
+          prerelease: false
