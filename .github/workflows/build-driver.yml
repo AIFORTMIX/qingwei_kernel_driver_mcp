@@ -105,21 +105,30 @@ jobs:
 
       - name: Fetch AOSP GKI kernel source
         run: |
-          BRANCH="${{ needs.config-summary.outputs.gki_branch }}"
+          set -euo pipefail
+          FORMATTED_BRANCH="${{ needs.config-summary.outputs.gki_branch }}"
           KERNEL_ROOT="${GITHUB_WORKSPACE}/kernel-source"
           mkdir -p "${KERNEL_ROOT}"
           cd "${KERNEL_ROOT}"
-          
-          git init
-          git remote add origin "https://android.googlesource.com/kernel/common"
-          git fetch --depth=1 origin "common-${BRANCH}"
-          git checkout FETCH_HEAD
-          
-          echo "Kernel source synced for branch: common-${BRANCH}"
+
+          echo "初始化 repo，分支: common-${FORMATTED_BRANCH}"
+          repo init --depth=1 -u https://android.googlesource.com/kernel/manifest -b "common-${FORMATTED_BRANCH}" --repo-rev=v2.16
+
+          # 检测是否为已弃用的分支
+          REMOTE_BRANCH="$(git ls-remote https://android.googlesource.com/kernel/common "${FORMATTED_BRANCH}" || true)"
+          DEFAULT_MANIFEST_PATH=.repo/manifests/default.xml
+          if grep -q deprecated <<< "$REMOTE_BRANCH"; then
+            echo "检测到已弃用的分支: ${FORMATTED_BRANCH}"
+            sed -i "s/\"${FORMATTED_BRANCH}\"/\"deprecated\/${FORMATTED_BRANCH}\"/g" "$DEFAULT_MANIFEST_PATH"
+          fi
+
+          repo sync -c -j"$(nproc --all)" --no-tags --fail-fast
+          echo "内核源码同步完成: common-${FORMATTED_BRANCH}"
 
       - name: Write localversion suffix
         run: |
-          KERNEL_ROOT="${GITHUB_WORKSPACE}/kernel-source"
+          # repo sync 后内核源码在 kernel-source/common/ 子目录
+          KERNEL_ROOT="${GITHUB_WORKSPACE}/kernel-source/common"
           if [ -n "${{ env.LOCALVERSION }}" ]; then
             echo "${{ env.LOCALVERSION }}" > "${KERNEL_ROOT}/localversion-qingwei"
             echo "localversion written: ${{ env.LOCALVERSION }}"
@@ -127,7 +136,7 @@ jobs:
 
       - name: Prepare out-of-tree module build
         run: |
-          KERNEL_ROOT="${GITHUB_WORKSPACE}/kernel-source"
+          KERNEL_ROOT="${GITHUB_WORKSPACE}/kernel-source/common"
           MODULE_DIR="${KERNEL_ROOT}/drivers/qingwei_mcp"
           
           mkdir -p "${MODULE_DIR}"
@@ -138,7 +147,7 @@ jobs:
 
       - name: Build kernel module (out-of-tree)
         run: |
-          KERNEL_ROOT="${GITHUB_WORKSPACE}/kernel-source"
+          KERNEL_ROOT="${GITHUB_WORKSPACE}/kernel-source/common"
           MODULE_DIR="${KERNEL_ROOT}/drivers/qingwei_mcp"
           
           cd "${KERNEL_ROOT}"
@@ -158,7 +167,7 @@ jobs:
 
       - name: Generate metadata
         run: |
-          MODULE_DIR="${GITHUB_WORKSPACE}/kernel-source/drivers/qingwei_mcp"
+          MODULE_DIR="${GITHUB_WORKSPACE}/kernel-source/common/drivers/qingwei_mcp"
           KO_FILE=$(find "${MODULE_DIR}" -name "qingwei_mcp.ko" -type f | head -1)
           
           if [ -z "${KO_FILE}" ]; then
@@ -182,7 +191,7 @@ jobs:
         with:
           name: qingwei_mcp-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
           path: |
-            kernel-source/drivers/qingwei_mcp/qingwei_mcp.ko
+            kernel-source/common/drivers/qingwei_mcp/qingwei_mcp.ko
             metadata.txt
           retention-days: 30
 
@@ -191,6 +200,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: qingwei_mcp-debug-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
-          path: kernel-source/drivers/qingwei_mcp/*.ko.debug
+          path: kernel-source/common/drivers/qingwei_mcp/*.ko.debug
           retention-days: 30
           if-no-files-found: ignore
