@@ -46,6 +46,42 @@ on:
         type: boolean
         default: false
 
+  workflow_call:
+    inputs:
+      android_version:
+        description: 'Android 版本'
+        required: true
+        type: string
+      kernel_version:
+        description: '内核版本'
+        required: true
+        type: string
+      sub_level:
+        description: '内核子版本号 (sub_level)'
+        required: false
+        type: string
+        default: '0'
+      os_patch_level:
+        description: '安全补丁日期 (YYYY-MM)'
+        required: false
+        type: string
+        default: '2025-01'
+      kernel_release:
+        description: '目标设备 uname -r 的完整值 (留空则自动生成)'
+        required: false
+        type: string
+        default: ''
+      localversion_suffix:
+        description: '追加到 UTS_RELEASE 的 localversion 后缀'
+        required: false
+        type: string
+        default: ''
+      debug:
+        description: '调试构建 (含调试符号)'
+        required: false
+        type: boolean
+        default: false
+
   push:
     paths:
       - 'driver/**'
@@ -212,18 +248,14 @@ jobs:
             echo "${TARGET_RELEASE}" > include/config/kernel.release
 
             # 同时直接写入 utsrelease.h（vermagic 从这里读取）
-            cat > include/generated/utsrelease.h <<UTSEOF
-#define UTS_RELEASE "${TARGET_RELEASE}"
-UTSEOF
+            printf '#define UTS_RELEASE "%s"\n' "${TARGET_RELEASE}" > include/generated/utsrelease.h
 
             echo "kernel.release: ${TARGET_RELEASE} (长度: ${#TARGET_RELEASE})"
             echo "utsrelease.h 已更新"
           else
             AUTO_RELEASE="${{ env.KERNEL_VERSION }}.${{ env.SUB_LEVEL }}-${{ env.ANDROID_VERSION }}-${{ env.OS_PATCH_LEVEL }}"
             echo "${AUTO_RELEASE}" > include/config/kernel.release
-            cat > include/generated/utsrelease.h <<UTSEOF
-#define UTS_RELEASE "${AUTO_RELEASE}"
-UTSEOF
+            printf '#define UTS_RELEASE "%s"\n' "${AUTO_RELEASE}" > include/generated/utsrelease.h
             echo "kernel.release 自动生成: ${AUTO_RELEASE}"
 
             if [ -n "${LOCALVERSION}" ]; then
