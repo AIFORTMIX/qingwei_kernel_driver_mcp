@@ -35,7 +35,7 @@ on:
       localversion_suffix:
         description: '追加到 UTS_RELEASE 的 localversion 后缀 (用于匹配 uname -r)'
         required: false
-        default: '-qingwei'
+        default: '-qw'
       debug:
         description: '调试构建 (含调试符号)'
         required: false
@@ -171,14 +171,6 @@ jobs:
             grep -n 'echo -lelf' "${BTFIDS_MK}" || true
           fi
 
-      - name: Write localversion suffix
-        run: |
-          KERNEL_ROOT="${GITHUB_WORKSPACE}/kernel-source/common"
-          if [ -n "${{ env.LOCALVERSION }}" ]; then
-            echo "${{ env.LOCALVERSION }}" > "${KERNEL_ROOT}/localversion-qingwei"
-            echo "localversion written: ${{ env.LOCALVERSION }}"
-          fi
-
       - name: Prepare external module source
         run: |
           MODULE_DIR="${GITHUB_WORKSPACE}/qingwei_mcp_module"
@@ -200,6 +192,27 @@ jobs:
 
           # 确保禁用 BTF（避免 resolve_btfids 被需要）
           scripts/config --disable DEBUG_INFO_BTF
+
+          # 截断内核版本字符串，确保加上 localversion 后不超过 64 字符
+          LOCALVERSION="${{ env.LOCALVERSION }}"
+          LV_LEN=${#LOCALVERSION}
+          MAX_BASE=$((64 - LV_LEN))
+
+          KERNEL_RELEASE=$(cat include/config/kernel.release)
+          echo "原始 kernel.release: ${KERNEL_RELEASE}"
+          echo "长度: ${#KERNEL_RELEASE}, 最大允许: ${MAX_BASE}"
+
+          if [ ${#KERNEL_RELEASE} -gt ${MAX_BASE} ]; then
+            TRUNCATED="${KERNEL_RELEASE:0:${MAX_BASE}}"
+            echo "${TRUNCATED}" > include/config/kernel.release
+            echo "已截断为: ${TRUNCATED} (长度: ${#TRUNCATED})"
+          fi
+
+          # 写入 localversion 后缀
+          if [ -n "${LOCALVERSION}" ]; then
+            echo "${LOCALVERSION}" > localversion-qingwei
+            echo "localversion written: ${LOCALVERSION}"
+          fi
 
           echo "=== 准备模块构建环境 (modules_prepare) ==="
           make ARCH=arm64 CC=clang modules_prepare -j$(nproc)
