@@ -34,15 +34,20 @@ static unsigned long resolve_symbol(const char *name)
 {
     struct kprobe kp;
     unsigned long addr;
+    int ret;
 
     memset(&kp, 0, sizeof(kp));
     kp.symbol_name = name;
 
-    if (register_kprobe(&kp) < 0)
+    ret = register_kprobe(&kp);
+    if (ret < 0) {
+        pr_warn("HWBP: failed to resolve symbol '%s' (ret=%d)\n", name, ret);
         return 0;
+    }
 
     addr = (unsigned long)kp.addr;
     unregister_kprobe(&kp);
+    pr_info("HWBP: resolved %s -> 0x%lx\n", name, addr);
     return addr;
 }
 
@@ -188,13 +193,15 @@ int hw_bp_multi_init(void)
         resolve_symbol("unregister_hw_breakpoint");
 
     if (g_register_user_hw_bp && g_unregister_hw_bp) {
-        pr_info("HWBP symbols resolved via kprobe\n");
+        pr_info("HWBP: symbols resolved via kprobe\n");
     } else {
-        pr_warn("HWBP symbols not found, HWBP disabled\n");
+        pr_warn("HWBP: symbols not found, HWBP disabled\n");
         return -ENOSYS;
     }
 
     g_hwbp_count = hw_bp_multi_detect_count();
+    pr_info("HWBP: detected %d breakpoint slots, %d watchpoint slots\n",
+            g_hw_bp_max, g_hw_wp_max);
 
     for (i = 0; i < QW_MAX_HWBP; i++) {
         memset(&g_bp_slots[i], 0, sizeof(g_bp_slots[i]));
@@ -207,6 +214,7 @@ int hw_bp_multi_init(void)
         }
     }
 
+    pr_info("HWBP: initialized %d slots with snapshot buffers\n", QW_MAX_HWBP);
     return 0;
 }
 
