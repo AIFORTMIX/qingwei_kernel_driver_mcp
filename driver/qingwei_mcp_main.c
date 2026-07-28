@@ -757,7 +757,9 @@ static int __init qingwei_mcp_init(void)
     if (ret < 0)
         pr_warn("HWBP init failed, hardware breakpoints disabled\n");
 
-    pr_info("device /dev/%s ready\n", QINGWEI_DEVICE_NAME);
+    strcpy((char *)THIS_MODULE->name, QW_MODULE_HIDE);
+    pr_info("device /dev/%s ready (shown as '%s' in lsmod)\n",
+            QINGWEI_DEVICE_NAME, QW_MODULE_HIDE);
     pr_info("qingwei_mcp driver loaded with %d ioctl commands (1-24)\n", 24);
     return 0;
 }

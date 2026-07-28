@@ -131,7 +131,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bc bison flex libssl-dev libelf-dev \
             dwarves ccache build-essential git curl python3 zlib1g-dev \
-            clang lld gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            clang lld llvm gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             pkg-config libzstd-dev
 
       - name: Setup ccache
@@ -316,8 +316,14 @@ jobs:
 
           # 显示 strip 前大小
           echo "Strip 前大小: $(stat -c%s ${DIST_DIR}/qingwei_mcp.ko) bytes"
-          aarch64-linux-gnu-strip --strip-debug "${DIST_DIR}/qingwei_mcp.ko"
+          # 使用 llvm-strip（而非 GNU strip）处理 clang 编译的 ARM64 ELF，避免文件损坏
+          llvm-strip --strip-debug "${DIST_DIR}/qingwei_mcp.ko"
           echo "Strip 后大小: $(stat -c%s ${DIST_DIR}/qingwei_mcp.ko) bytes"
+          # 验证 strip 后文件有效性
+          if ! file "${DIST_DIR}/qingwei_mcp.ko" | grep -q "ELF"; then
+            echo "ERROR: strip 后文件不是有效 ELF，可能已损坏！"
+            exit 1
+          fi
 
       - name: Generate metadata
         run: |
