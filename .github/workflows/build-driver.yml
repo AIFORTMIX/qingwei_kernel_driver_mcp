@@ -235,10 +235,9 @@ jobs:
           # 确保禁用 BTF(避免 resolve_btfids 被需要)
           scripts/config --disable DEBUG_INFO_BTF
 
-          # 禁用 MODVERSIONS - 避免 CRC 不匹配导致立即崩溃
-          # 目标内核虽然有 modversions,但我们没有正确的 Module.symvers
-          # 禁用后模块不进行符号 CRC 校验,vermagic 匹配即可加载
-          scripts/config --disable MODVERSIONS
+          # 重新启用 MODVERSIONS - 匹配目标内核的 vermagic
+          # 目标内核 vermagic 包含 modversions,模块必须一致
+          scripts/config --enable MODVERSIONS
 
           echo "=== 准备模块构建环境 (modules_prepare) ==="
           make ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- modules_prepare -j$(nproc)
