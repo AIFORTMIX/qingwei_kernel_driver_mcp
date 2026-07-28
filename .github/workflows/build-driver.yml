@@ -199,19 +199,31 @@ jobs:
           # 确保禁用 BTF（避免 resolve_btfids 被需要）
           scripts/config --disable DEBUG_INFO_BTF
 
-          # 设置精确的 kernel.release（用于匹配目标设备 uname -r）
+          echo "=== 准备模块构建环境 (modules_prepare) ==="
+          make ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- modules_prepare -j$(nproc)
+
+          # modules_prepare 会重新生成 kernel.release（使用 git describe，结果不正确）
+          # 必须在 modules_prepare 之后覆盖写入正确的版本
           TARGET_RELEASE="${{ env.KERNEL_RELEASE }}"
           LOCALVERSION="${{ env.LOCALVERSION }}"
 
           if [ -n "${TARGET_RELEASE}" ]; then
-            # 用户提供了完整的 uname -r 值，直接写入
+            echo "=== 设置精确 kernel.release ==="
             echo "${TARGET_RELEASE}" > include/config/kernel.release
-            echo "kernel.release 设为: ${TARGET_RELEASE} (长度: ${#TARGET_RELEASE})"
-            # 不写 localversion 文件，避免追加额外后缀
+
+            # 同时直接写入 utsrelease.h（vermagic 从这里读取）
+            cat > include/generated/utsrelease.h <<UTSEOF
+#define UTS_RELEASE "${TARGET_RELEASE}"
+UTSEOF
+
+            echo "kernel.release: ${TARGET_RELEASE} (长度: ${#TARGET_RELEASE})"
+            echo "utsrelease.h 已更新"
           else
-            # 未提供完整值，自动生成并可用 localversion 后缀
             AUTO_RELEASE="${{ env.KERNEL_VERSION }}.${{ env.SUB_LEVEL }}-${{ env.ANDROID_VERSION }}-${{ env.OS_PATCH_LEVEL }}"
             echo "${AUTO_RELEASE}" > include/config/kernel.release
+            cat > include/generated/utsrelease.h <<UTSEOF
+#define UTS_RELEASE "${AUTO_RELEASE}"
+UTSEOF
             echo "kernel.release 自动生成: ${AUTO_RELEASE}"
 
             if [ -n "${LOCALVERSION}" ]; then
@@ -220,8 +232,8 @@ jobs:
             fi
           fi
 
-          echo "=== 准备模块构建环境 (modules_prepare) ==="
-          make ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- modules_prepare -j$(nproc)
+          echo "最终 kernel.release: $(cat include/config/kernel.release)"
+          echo "最终 utsrelease.h: $(cat include/generated/utsrelease.h)"
 
           echo "内核构建环境准备完成"
 
@@ -234,6 +246,17 @@ jobs:
           mkdir -p "${DIST_DIR}"
 
           cd "${KERNEL_ROOT}"
+
+          # 再次确认版本文件正确（防止跨步骤状态丢失）
+          TARGET_RELEASE="${{ env.KERNEL_RELEASE }}"
+          if [ -n "${TARGET_RELEASE}" ]; then
+            echo "${TARGET_RELEASE}" > include/config/kernel.release
+            printf '#define UTS_RELEASE "%s"\n' "${TARGET_RELEASE}" > include/generated/utsrelease.h
+            # 设置文件时间戳为未来，防止 make 重新生成
+            touch -d "tomorrow" include/config/kernel.release
+            touch -d "tomorrow" include/generated/utsrelease.h
+            echo "vermagic 目标: ${TARGET_RELEASE}"
+          fi
 
           echo "=== 开始编译外部模块 (clang) ==="
           echo "KERNEL_ROOT: ${KERNEL_ROOT}"
