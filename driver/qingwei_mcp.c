@@ -784,10 +784,10 @@ static unsigned long resolve_symbol(const char *name)
     memset(&kp, 0, sizeof(kp));
     kp.symbol_name = name;
 
-    pr_info("HWBP: resolving symbol '%s' via kprobe...\n", name);
+    pr_err("HWBP: resolving symbol '%s' via kprobe...\n", name);
     ret = register_kprobe(&kp);
     if (ret < 0) {
-        pr_warn("HWBP: failed to resolve symbol '%s' (ret=%d)\n", name, ret);
+        pr_err("HWBP: failed to resolve symbol '%s' (ret=%d)\n", name, ret);
         return 0;
     }
 
@@ -795,11 +795,11 @@ static unsigned long resolve_symbol(const char *name)
     unregister_kprobe(&kp);
 
     if (addr < PAGE_SIZE) {
-        pr_warn("HWBP: resolved address 0x%lx for '%s' is invalid (too low)\n", addr, name);
+        pr_err("HWBP: resolved address 0x%lx for '%s' is invalid (too low)\n", addr, name);
         return 0;
     }
 
-    pr_info("HWBP: resolved %s -> 0x%lx\n", name, addr);
+    pr_err("HWBP: resolved %s -> 0x%lx\n", name, addr);
     return addr;
 }
 
@@ -841,7 +841,7 @@ static int hw_bp_multi_detect_count(void)
 
     g_hw_bp_max = num_bp;
     g_hw_wp_max = num_wp;
-    pr_info("HWBP: detected %d HW BP slots, %d WP slots\n", num_bp, num_wp);
+    pr_err("HWBP: detected %d HW BP slots, %d WP slots\n", num_bp, num_wp);
     return num_bp;
 }
 
@@ -901,34 +901,34 @@ static int hw_bp_multi_init(void)
 {
     int i;
 
-    pr_info("HWBP: init step 1 - resolving register_user_hw_breakpoint\n");
+    pr_err("HWBP: init step 1 - resolving register_user_hw_breakpoint\n");
     g_register_user_hw_bp = (register_user_hw_bp_fn)
         resolve_symbol("register_user_hw_breakpoint");
-    pr_info("HWBP: init step 2 - resolving unregister_hw_breakpoint\n");
+    pr_err("HWBP: init step 2 - resolving unregister_hw_breakpoint\n");
     g_unregister_hw_bp = (unregister_hw_bp_fn)
         resolve_symbol("unregister_hw_breakpoint");
 
     if (g_register_user_hw_bp && g_unregister_hw_bp) {
-        pr_info("HWBP: init step 3 - symbols resolved OK\n");
+        pr_err("HWBP: init step 3 - symbols resolved OK\n");
     } else {
-        pr_warn("HWBP: init step 3 - symbols not found, HWBP disabled\n");
+        pr_err("HWBP: init step 3 - symbols not found, HWBP disabled\n");
         return -ENOSYS;
     }
 
-    pr_info("HWBP: init step 4 - detecting hardware breakpoint count\n");
+    pr_err("HWBP: init step 4 - detecting hardware breakpoint count\n");
     g_hwbp_count = hw_bp_multi_detect_count();
 
-    pr_info("HWBP: init step 5 - allocating snapshot buffers\n");
+    pr_err("HWBP: init step 5 - allocating snapshot buffers\n");
     for (i = 0; i < QW_MAX_HWBP; i++) {
         memset(&g_bp_slots[i], 0, sizeof(g_bp_slots[i]));
         spin_lock_init(&g_bp_slots[i].snap_lock);
         g_bp_slots[i].snapshots = kcalloc(QW_SNAPSHOT_CACHE_SIZE,
                                            sizeof(struct snapshot_entry), GFP_KERNEL);
         if (!g_bp_slots[i].snapshots)
-            pr_warn("HWBP: failed to alloc snapshot buffer for slot %d\n", i);
+            pr_err("HWBP: failed to alloc snapshot buffer for slot %d\n", i);
     }
 
-    pr_info("HWBP: init complete - %d slots ready\n", QW_MAX_HWBP);
+    pr_err("HWBP: init complete - %d slots ready\n", QW_MAX_HWBP);
     return 0;
 }
 
@@ -2023,45 +2023,30 @@ static int __init qingwei_mcp_init(void)
 {
     int ret;
 
-    pr_info("init step 1 - registering misc device\n");
+    /* 使用 pr_err 确保在任何 console loglevel 下都能看到 */
+    pr_err("=== qingwei_mcp init START ===\n");
+
+    pr_err("init step 1 - registering misc device\n");
     ret = misc_register(&misc_dev);
     if (ret) {
         pr_err("misc_register failed (ret=%d)\n", ret);
         return ret;
     }
-    pr_info("init step 2 - misc device registered OK\n");
+    pr_err("init step 2 - misc device registered OK\n");
 
-    pr_info("init step 3 - initializing HWBP subsystem\n");
+    /* HWBP 初始化：用 kprobe 解析未导出符号，GKI 内核可能不支持 */
+    pr_err("init step 3 - initializing HWBP subsystem\n");
     ret = hw_bp_multi_init();
     if (ret < 0)
-        pr_warn("HWBP init failed (ret=%d), hardware breakpoints disabled\n", ret);
+        pr_err("HWBP init failed (ret=%d), hardware breakpoints disabled\n", ret);
     else
-        pr_info("init step 4 - HWBP initialized OK\n");
+        pr_err("init step 4 - HWBP initialized OK\n");
 
-    /* 动态解析 copy_to_kernel_nofault（GKI 内核可能未导出此符号） */
-    pr_info("init step 5 - attempting module name hide\n");
-    {
-        typedef long (*copy_to_kernel_nofault_fn)(void *, const void *, size_t);
-        struct kprobe kp_hide;
-        copy_to_kernel_nofault_fn fn;
+    /* 模块名隐藏：完全跳过，避免写入只读内存导致 panic */
+    pr_err("init step 5 - module name hide skipped for safety\n");
 
-        memset(&kp_hide, 0, sizeof(kp_hide));
-        kp_hide.symbol_name = "copy_to_kernel_nofault";
-        if (register_kprobe(&kp_hide) == 0) {
-            fn = (copy_to_kernel_nofault_fn)kp_hide.addr;
-            unregister_kprobe(&kp_hide);
-            if (fn((char *)THIS_MODULE->name, QW_MODULE_HIDE,
-                   strlen(QW_MODULE_HIDE) + 1) == 0) {
-                pr_info("init step 6 - module hidden as '%s'\n", QW_MODULE_HIDE);
-            } else {
-                pr_info("init step 6 - name hide failed (read-only memory)\n");
-            }
-        } else {
-            pr_info("init step 6 - name hide skipped (symbol not exported)\n");
-        }
-    }
-
-    pr_info("qingwei_mcp driver loaded with %d ioctl commands (1-24)\n", 24);
+    pr_err("qingwei_mcp driver loaded OK (24 ioctl commands)\n");
+    pr_err("=== qingwei_mcp init DONE ===\n");
     return 0;
 }
 
