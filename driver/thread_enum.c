@@ -2,6 +2,8 @@
 #define pr_fmt(fmt) "qingwei_mcp_thr: " fmt
 
 #include <linux/sched.h>
+#include <linux/sched/signal.h>
+#include <linux/sched/task_stack.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/version.h>
