@@ -8,6 +8,7 @@
 #include <linux/mutex.h>
 #include <linux/spinlock.h>
 #include <linux/ktime.h>
+#include <linux/kprobes.h>
 #include <linux/version.h>
 
 #ifdef CONFIG_HAVE_HW_BREAKPOINT
@@ -294,7 +295,7 @@ static int __hw_bp_multi_set_locked(kai_hwbp_setup_t *setup, struct task_struct 
     slot->snap_count = 0;
     spin_unlock(&slot->snap_lock);
 
-    pr_info("HWBP[%u]: set addr=0x%lx type=%u len=%u pid=%d\n",
+    pr_info("HWBP[%u]: set addr=0x%lx type=%u len=%llu pid=%d\n",
             setup->bp_index, setup->bp_addr, setup->bp_type,
             attr.bp_len, task->pid);
     return 0;
